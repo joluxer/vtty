@@ -47,14 +47,21 @@ static struct tty_driver *vtty_driver;
 static bool user_break_timing = true;
 static char* tty_name_template = "ttyV";
 static char* mux_name = "vtmx";
+static bool set_termios_full = false;
 
 #ifndef TCGETS2
 #error "This code is not adapted to run on an arch lacking TCGETS2/termios2"
 #endif
 
 union vtty_oob_data {
-	struct ktermios termios;
-	struct termios2 user_termios; // used only for sizeof
+	struct {
+		struct ktermios ktermios;
+		struct ktermios old_ktermios;
+	} tio;
+	struct {
+		struct termios2 termios; // used only for sizeof
+		struct termios2 old_termios; // used only for sizeof
+	} user_tio;
 	unsigned int modem_lines;
 	int break_val;
 };
@@ -75,6 +82,7 @@ struct vtty_port {
 
 	unsigned int modem_state;
 	bool master_is_open;
+	bool set_termios_full;
 
 	wait_queue_head_t read_wait, write_wait; // read/write from vtmx perspective
 	wait_queue_head_t oob_wait; // vtty-side ioctl => vtmx-side read
@@ -235,14 +243,21 @@ static int vtty_wait_oob(struct vtty_port *port, unsigned long *pflags)
 	return 0;
 }
 
-static void vtty_do_queue_oob(struct vtty_port *port, int tag, void *data, size_t len)
+static void vtty_do_queue_oob(struct vtty_port *port, int tag, void *data, size_t len, void *data2, size_t len2)
 {
 	port->oob_tag = tag;
 	memcpy(&port->oob_data, data, port->oob_size = len);
+
+	if (!!data2 && !!len2)
+	{
+		memcpy(((unsigned char*)&port->oob_data) + len, data2, len2);
+		port->oob_size += len2;
+	}
+
 	wake_up_interruptible_sync_poll(&port->read_wait, POLLIN | POLLRDNORM);
 }
 
-static int vtty_queue_oob(struct vtty_port *port, int tag, void *data, size_t len)
+static int vtty_queue_oob(struct vtty_port *port, int tag, void *data, size_t len, void *data2, size_t len2)
 {
 	int ret = 0;
 	unsigned long flags;
@@ -253,7 +268,7 @@ static int vtty_queue_oob(struct vtty_port *port, int tag, void *data, size_t le
 	ret = vtty_wait_oob(port, &flags);
 
 	if(ret == 0)
-		vtty_do_queue_oob(port, tag, data, len);
+		vtty_do_queue_oob(port, tag, data, len, data2, len2);
 
 	spin_unlock_irqrestore(&port->port.lock, flags);
 
@@ -269,7 +284,8 @@ static void vtty_set_termios(struct tty_struct *tty, struct ktermios *old_termio
 	dev_dbg(tty->dev, "%s enter\n", __func__);
 
 	// this may sleep
-	vtty_queue_oob(port, TAG_SET_TERMIOS, &tty->termios, sizeof(tty->termios));
+	if (vtty_queue_oob(port, TAG_SET_TERMIOS, &tty->termios, sizeof(tty->termios), old_termios, sizeof(*old_termios)))
+		dev_info(tty->dev, "%s could not queue OOB data\n", __func__);
 
 	dev_dbg(tty->dev, "%s exit\n", __func__);
 }
@@ -343,7 +359,8 @@ static int vtty_break_ctl(struct tty_struct *tty, int state)
 	// state = -1 	-> on
 	// state = 0 	-> off
 	// state > 0 	-> on for X ms
-	vtty_queue_oob(port, TAG_BREAK_CTL, &state, sizeof(state));
+	if (vtty_queue_oob(port, TAG_BREAK_CTL, &state, sizeof(state), NULL, 0))
+		dev_info(tty->dev, "%s could not queue OOB data\n", __func__);
 
 	dev_dbg(tty->dev, "%s exit\n", __func__);
 
@@ -374,6 +391,7 @@ static int vtty_create_port(int index)
 	pr_debug("%s %s port[%d] enter\n", module_name(THIS_MODULE), __func__, (int)index);
 
 	memset(port, 0, sizeof(*port));
+	port->set_termios_full = set_termios_full;  // take global value, later we can implement a master side ioctl to change it during runtime
 	tty_port_init(&port->port);
 	tty_buffer_set_limit(&port->port, 8192);
 
@@ -577,7 +595,15 @@ static ssize_t vtmx_read (struct file *filp, char __user *ptr, size_t size, loff
 				size--;
 
 				if(tag == TAG_SET_TERMIOS) {
-					copystatus = kernel_termios_to_user_termios((struct termios2 __user*)ptr, &port->oob_data.termios);
+					copystatus = kernel_termios_to_user_termios((struct termios2 __user*)ptr, &port->oob_data.tio.ktermios);
+					ret += sizeof(struct termios2);
+
+					if(copystatus) {
+						ret = -EFAULT;
+						break;
+					}
+
+					copystatus = kernel_termios_to_user_termios(((struct termios2 __user*)ptr) + 1, &port->oob_data.tio.old_ktermios);
 					ret += sizeof(struct termios2);
 				} else {
 					copystatus = copy_to_user(ptr, &port->oob_data, port->oob_size);
@@ -904,6 +930,8 @@ static void __exit vtty_exit(void)
 
 module_param(user_break_timing, bool, 0444);
 MODULE_PARM_DESC(user_break_timing, " set N, if the userspace vtty provider/master cannot do break signal timing, defaults to Y");
+module_param(set_termios_full, bool, 0664);
+MODULE_PARM_DESC(set_termios_full, " enable submission of new and old termios value in SET_TERMIOS packet to master");
 module_param(tty_name_template, charp, 0444);
 MODULE_PARM_DESC(tty_name_template, " the vtty slave name template for the vtty's, defaults to 'ttyV'");
 module_param(mux_name, charp, 0444);
