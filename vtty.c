@@ -48,6 +48,7 @@ static bool user_break_timing = true;
 static char* tty_name_template = "ttyV";
 static char* mux_name = "vtmx";
 static bool set_termios_full = false;
+static bool full_state_control = false; // set to false false backward compatible behaviour, but it is dangerous, to keep a copy of data, where the server side has no control on
 
 #ifndef TCGETS2
 #error "This code is not adapted to run on an arch lacking TCGETS2/termios2"
@@ -818,7 +819,11 @@ static int vtty_modem_state_set(struct vtty_port *port, unsigned int __user *arg
 	spin_lock_irqsave(&port->port.lock, flags);
 
 	ret = get_user(mstate, arg);
-	port->modem_state = (port->modem_state & (~ALLOWED_STATES)) | (mstate & ALLOWED_STATES);
+
+	if (full_state_control)
+	  port->modem_state = mstate;
+	else
+	  port->modem_state = (port->modem_state & (~ALLOWED_STATES)) | (mstate & ALLOWED_STATES);
 
 	spin_unlock_irqrestore(&port->port.lock, flags);
 
@@ -932,6 +937,8 @@ module_param(user_break_timing, bool, 0444);
 MODULE_PARM_DESC(user_break_timing, " set N, if the userspace vtty provider/master cannot do break signal timing, defaults to Y");
 module_param(set_termios_full, bool, 0664);
 MODULE_PARM_DESC(set_termios_full, " enable submission of new and old termios value in SET_TERMIOS packet to master");
+module_param(full_state_control, bool, 0664);
+MODULE_PARM_DESC(full_state_control, " enable full control of modem state, output bits too, from master");
 module_param(tty_name_template, charp, 0444);
 MODULE_PARM_DESC(tty_name_template, " the vtty slave name template for the vtty's, defaults to 'ttyV'");
 module_param(mux_name, charp, 0444);
