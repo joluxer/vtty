@@ -3,10 +3,11 @@
 #ifndef _VTTY_H
 #define _VTTY_H
 
-#define TAG_UART_RX 	(0)
-#define TAG_SET_TERMIOS	(1)
-#define TAG_SET_MODEM 	(2)
-#define TAG_BREAK_CTL 	(3)
+#define TAG_UART_RX 	   (0)
+#define TAG_SET_TERMIOS	 (1)
+#define TAG_SET_MODEM 	 (2)
+#define TAG_BREAK_CTL 	 (3)
+#define TAG_FLUSH_BUFFER (4)
 
 #include <asm/ioctl.h>
 

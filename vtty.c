@@ -368,6 +368,21 @@ static int vtty_break_ctl(struct tty_struct *tty, int state)
 	return 0;
 }
 
+static void vtty_flush_buffer(struct tty_struct *tty)
+{
+  unsigned char dummy_byte = ~0;
+	struct vtty_port *port = &ports[tty->index];
+
+	dev_dbg(tty->dev, "%s enter\n", __func__);
+
+  vtty_circ_clear(&port->xmit);
+
+	if (vtty_queue_oob(port, TAG_FLUSH_BUFFER, &dummy_byte, sizeof(dummy_byte), NULL, 0))
+		dev_info(tty->dev, "%s could not queue OOB data\n", __func__);
+
+	dev_dbg(tty->dev, "%s exit\n", __func__);
+}
+
 static const struct tty_operations vtty_ops = {
 	.open = vtty_open,
 	.close = vtty_close,
@@ -380,6 +395,7 @@ static const struct tty_operations vtty_ops = {
 	.tiocmget = vtty_tiocmget,
 	.tiocmset = vtty_tiocmset,
 	.break_ctl = vtty_break_ctl,
+	.flush_buffer = vtty_flush_buffer,
 };
 
 static int vtty_create_port(int index)
