@@ -23,7 +23,7 @@
 #endif
 
 #include <stdarg.h>
-void t_begin(const char *str, ...) 
+void t_begin(const char *str, ...)
 {
 	va_list va;
 	va_start(va, str);
@@ -51,7 +51,7 @@ void t_check(int cond, const char *str, ...)
 	abort();
 }
 
-void t_ok() 
+void t_ok()
 {
 	// wait for all junk to finish
 	usleep(50000);
@@ -98,7 +98,7 @@ void tty_set_raw(int fd)
 	t.c_iflag = IGNPAR;
 	t.c_oflag = 0;
 	t.c_lflag = 0;
-  
+
 	t.c_cc[VMIN] = 1;
 	t.c_cc[VTIME] = 0;
 	tcsetattr(fd, TCSANOW, &t);
@@ -111,7 +111,7 @@ void open_vtmx(int *mx)
 	static int zero = 0;
 	ioctl(*mx, TIOCSPTLCK, &zero);
 #endif
-	usleep(10000); // give udev some time
+	usleep(500000); // give udev some time, on user-mode linux, this takes longer
 }
 
 void open_vtty(int *tty)
@@ -140,9 +140,9 @@ void t3_mux_write()
 	t_assert_eq(write(mx, ibuf, 16), 16);
 	t_assert_eq(read(tty, obuf, 16), 16);
 	t_assert(!memcmp(ibuf, obuf, 16));
-	t_ok();
 	close(mx);
 	close(tty);
+	t_ok();
 }
 
 void t4_mux_write_noslave()
@@ -157,9 +157,9 @@ void t4_mux_write_noslave()
 
 	t_assert_eq(read(tty, obuf, 16), 16);
 	t_assert(!memcmp(ibuf, obuf, 16));
-	t_ok();
 	close(mx);
 	close(tty);
+	t_ok();
 }
 
 int vtmx_read_uart(int mx, char *buf, int len)
@@ -182,7 +182,7 @@ repeat:
 #endif
 }
 
-void t5_slave_write() 
+void t5_slave_write()
 {
 	int mx, tty;
 	char ibuf[16]="0123456789abcdef";
@@ -194,9 +194,10 @@ void t5_slave_write()
 	t_assert_eq(vtmx_read_uart(mx, obuf, 16), 16);
 	t_assert(!memcmp(ibuf, obuf, 16));
 
-	t_ok();
 	close(mx);
 	close(tty);
+
+	t_ok();
 }
 
 void nop(int sig) { (void)sig; }
@@ -260,7 +261,7 @@ static const char *blocking_behaviour[] = {
 	"block (& timeout)",
 };
 
-void t6_slave_read_block(syncmode_t sync) 
+void t6_slave_read_block(syncmode_t sync)
 {
 	int mx, tty;
 	char c;
@@ -285,9 +286,10 @@ void t6_slave_read_block(syncmode_t sync)
 		break;
 	}
 
-	t_ok();
 	close(mx);
 	close(tty);
+
+	t_ok();
 }
 
 void t7_slave_read_wakeup(syncmode_t sync)
@@ -319,9 +321,10 @@ void t7_slave_read_wakeup(syncmode_t sync)
 	};
 
 	usleep(100000);
-	t_ok();
 	close(mx);
 	close(tty);
+
+	t_ok();
 }
 
 void drain(int fd)
@@ -359,9 +362,10 @@ void t8_mux_read_block(syncmode_t sync)
 		break;
 	}
 
-	t_ok();
 	close(mx);
 	close(tty);
+
+	t_ok();
 }
 
 void t9_mux_read_wakeup(syncmode_t sync)
@@ -393,10 +397,11 @@ void t9_mux_read_wakeup(syncmode_t sync)
 		abort();
 	};
 
-	t_ok();
 	usleep(100000);
 	close(mx);
 	close(tty);
+
+	t_ok();
 }
 
 void t10_slave_write_block(syncmode_t sync)
@@ -414,7 +419,7 @@ void t10_slave_write_block(syncmode_t sync)
 			if(rv < 0 && errno == EINTR)
 				break;
 
-			if(rv < sizeof(buf)) 
+			if(rv < sizeof(buf))
 				// short write
 				break;
 
@@ -517,7 +522,7 @@ void t11_mux_write_block(syncmode_t sync)
 			if(rv < 0 && errno == EINTR)
 				break;
 
-			if(rv < sizeof(buf)) 
+			if(rv < sizeof(buf))
 				// short write
 				break;
 
@@ -615,8 +620,9 @@ void t12_close_mux()
 	close(mx);
 	t_assert_eq(read(tty, &c, 1), 0);
 
-	t_ok();
 	close(tty);
+
+	t_ok();
 }
 
 void t13_close_mux_blocking()
@@ -632,15 +638,16 @@ void t13_close_mux_blocking()
 		close(mx);
 		_exit(0);
 	}
-	
+
 	close(mx);
 
 	set_timeout(250);
 	t_assert_eq(read(tty, &c, 1), -1);
 	t_assert(errno == EIO);
 
-	t_ok();
 	close(tty);
+
+	t_ok();
 }
 
 void t14_close_mux_polled()
@@ -655,13 +662,14 @@ void t14_close_mux_polled()
 		close(mx);
 		_exit(0);
 	}
-	
+
 	close(mx);
 
 	t_assert_eq(select_read(tty, 250), 1);
 
-	t_ok();
 	close(tty);
+
+	t_ok();
 }
 
 #ifndef TEST_ON_PTY
@@ -684,10 +692,10 @@ void t15_vtty_tcsetattr_vtmx_oob()
 	t_assert(read(mx, buf, sizeof(buf)) > 0);
 	t_assert_eq(buf[0], TAG_SET_TERMIOS);
 
-	t_ok();
-
 	close(mx);
 	close(tty);
+
+	t_ok();
 }
 
 void t16_vtty_mset_vtmx_oob()
@@ -720,10 +728,10 @@ void t16_vtty_mset_vtmx_oob()
 	memcpy(&w, buf+1, 4);
 	t_assert_eq(w, TIOCM_RTS);
 
-	t_ok();
-
 	close(mx);
 	close(tty);
+
+	t_ok();
 }
 
 void t17_vtty_break_vtmx_oob()
@@ -742,10 +750,10 @@ void t17_vtty_break_vtmx_oob()
 	memcpy(&v, buf+1, 4);
 	t_assert(v > 0);
 
-	t_ok();
-
 	close(mx);
 	close(tty);
+
+	t_ok();
 }
 
 void t18_vtmx_oob_not_lost()
@@ -771,7 +779,7 @@ void t18_vtmx_oob_not_lost()
 	t_assert_eq(buf[0], TAG_SET_TERMIOS);
 
 	usleep(100000); // force child process to wait
-	
+
 	t_assert(read(mx, buf, sizeof(buf)) > 0);
 	t_assert_eq(buf[0], TAG_SET_TERMIOS);
 
@@ -850,7 +858,7 @@ int main()
 {
 	signal(SIGCHLD, SIG_IGN);
 	printf("Test using %s\n", MASTER_PATH);
-	
+
 	t1_open_mux_create_slave();
 	t2_mux_return_index();
 	t3_mux_write();
