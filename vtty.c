@@ -41,6 +41,9 @@
 // --
 
 #define VTTY_MAX 	(16)
+#define MASTER_CLOSED 0
+#define MASTER_OPEN 1
+#define MASTER_CLOSING 2
 
 static struct tty_driver *vtty_driver;
 
@@ -82,7 +85,7 @@ struct vtty_port {
 	size_t oob_size;
 
 	unsigned int modem_state;
-	bool master_is_open;
+	unsigned int master_is_open;
 	bool set_termios_full;
 
 	wait_queue_head_t read_wait, write_wait; // read/write from vtmx perspective
@@ -149,25 +152,28 @@ static int vtty_write(struct tty_struct *tty, const unsigned char *buf, int coun
 
 	dev_dbg(tty->dev, "%s enter\n", __func__);
 
-	spin_lock_irqsave(&port->port.lock, flags);
+	if (MASTER_CLOSING > port->master_is_open)
+	{
+	  spin_lock_irqsave(&port->port.lock, flags);
 
-	while (1) {
-		int c = CIRC_SPACE_TO_END(circ->head, circ->tail, VTTY_XMIT_SIZE);
-		if (count < c)
-			c = count;
+	  while (1) {
+	    int c = CIRC_SPACE_TO_END(circ->head, circ->tail, VTTY_XMIT_SIZE);
+	    if (count < c)
+	      c = count;
 
-		if (c == 0) {
-			break;
-		}
-		memcpy(circ->buf + circ->head, buf, c);
-		circ->head = (circ->head + c) & (VTTY_XMIT_SIZE - 1);
-		buf += c;
-		count -= c;
-		ret += c;
+	    if (c == 0) {
+	      break;
+	    }
+	    memcpy(circ->buf + circ->head, buf, c);
+	    circ->head = (circ->head + c) & (VTTY_XMIT_SIZE - 1);
+	    buf += c;
+	    count -= c;
+	    ret += c;
+	  }
+
+	  wake_up_interruptible_sync_poll(&port->read_wait, POLLIN | POLLRDNORM);
+	  spin_unlock_irqrestore(&port->port.lock, flags);
 	}
-
-	wake_up_interruptible_sync_poll(&port->read_wait, POLLIN | POLLRDNORM);
-	spin_unlock_irqrestore(&port->port.lock, flags);
 
 	dev_dbg(tty->dev, "%s written %d (cste=%d)\n", __func__, ret, CIRC_SPACE_TO_END(circ->head, circ->tail, VTTY_XMIT_SIZE));
 	dev_dbg(tty->dev, "%s exit\n", __func__);
@@ -184,13 +190,16 @@ static int vtty_write_room(struct tty_struct *tty)
 	struct vtty_port *port = &ports[tty->index];
 	struct circ_buf *circ = &port->xmit;
 	unsigned long flags;
-	unsigned int ret;
+	unsigned int ret = 0;
 
 	dev_dbg(tty->dev, "%s enter\n", __func__);
 
-	spin_lock_irqsave(&port->port.lock, flags);
-	ret = vtty_circ_chars_free(circ);
-	spin_unlock_irqrestore(&port->port.lock, flags);
+  if (MASTER_CLOSING > port->master_is_open)
+  {
+    spin_lock_irqsave(&port->port.lock, flags);
+    ret = vtty_circ_chars_free(circ);
+    spin_unlock_irqrestore(&port->port.lock, flags);
+  }
 
 	dev_dbg(tty->dev, "write room = %d\n", ret);
 	dev_dbg(tty->dev, "%s exit\n", __func__);
@@ -265,13 +274,16 @@ static int vtty_queue_oob(struct vtty_port *port, int tag, void *data, size_t le
 
 	dev_dbg(port->tty->dev, "%s enter\n", __func__);
 
-	spin_lock_irqsave(&port->port.lock, flags);
-	ret = vtty_wait_oob(port, &flags);
+	if (MASTER_CLOSING > port->master_is_open)  // else throw away the data
+	{
+	  spin_lock_irqsave(&port->port.lock, flags);
+	  ret = vtty_wait_oob(port, &flags);
 
-	if(ret == 0)
-		vtty_do_queue_oob(port, tag, data, len, data2, len2);
+	  if(ret == 0)
+	    vtty_do_queue_oob(port, tag, data, len, data2, len2);
 
-	spin_unlock_irqrestore(&port->port.lock, flags);
+	  spin_unlock_irqrestore(&port->port.lock, flags);
+	}
 
 	dev_dbg(port->tty->dev, "%s exit\n", __func__);
 
@@ -502,7 +514,7 @@ static int vtmx_open(struct inode *nodp, struct file *filp)
 	if(rv < 0)
 		goto fail_unlock;
 
-	ports[index].master_is_open = true;
+	ports[index].master_is_open = MASTER_OPEN;
 	filp->private_data = &ports[index];
 
 	pr_debug("%s %s port %d created\n", module_name(THIS_MODULE), __func__, index);
@@ -532,26 +544,32 @@ static int vtmx_release (struct inode *nodp, struct file *filp)
 
 	pr_debug("%s %s port[%d] enter\n", module_name(THIS_MODULE), __func__, (int)idx);
 
+	// prohibit queueing slave->master data, no-one will consume it
+	port->master_is_open = MASTER_CLOSING;
+
+	// kill pending OOB data, no-one will consume it
+	port->oob_size = 0;
+
 	if(port->tty) {
 		set_bit(TTY_IO_ERROR, &port->tty->flags);
-		wake_up_interruptible(&port->read_wait);
-		wake_up_interruptible(&port->write_wait);
+		wake_up_all(&port->read_wait);
+		wake_up_all(&port->write_wait);
 	}
 
 	if(port->tty) {
 		// FIXME locking?
 		set_bit(TTY_OTHER_CLOSED, &port->tty->flags);
-		wake_up_interruptible(&port->read_wait);
-		wake_up_interruptible(&port->write_wait);
+		wake_up_all(&port->read_wait);
+		wake_up_all(&port->write_wait);
 	}
 
 	if(port->tty) {
 		tty_vhangup(port->tty);
-		wake_up_interruptible(&port->read_wait);
-		wake_up_interruptible(&port->write_wait);
+//		wake_up_all(&port->read_wait);
+//		wake_up_all(&port->write_wait);
 	}
 
-	port->master_is_open = false;
+	port->master_is_open = MASTER_CLOSED;
 
 	if (!port->tty)
 		vtty_destroy_port(idx);
