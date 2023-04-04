@@ -87,6 +87,7 @@ struct vtty_port {
 	unsigned int modem_state;
 	unsigned int master_is_open;
 	bool set_termios_full;
+	bool full_state_control;
 
 	wait_queue_head_t read_wait, write_wait; // read/write from vtmx perspective
 	wait_queue_head_t oob_wait; // vtty-side ioctl => vtmx-side read
@@ -421,6 +422,7 @@ static int vtty_create_port(int index)
 
 	memset(port, 0, sizeof(*port));
 	port->set_termios_full = set_termios_full;  // take global value, later we can implement a master side ioctl to change it during runtime
+	port->full_state_control = full_state_control;  // take global value, later we can implement a master side ioctl to change it during runtime
 	tty_port_init(&port->port);
 	tty_buffer_set_limit(&port->port, 8192);
 
@@ -856,7 +858,7 @@ static int vtty_modem_state_set(struct vtty_port *port, unsigned int __user *arg
 
 	ret = get_user(mstate, arg);
 
-	if (full_state_control)
+	if (port->full_state_control)
 	  port->modem_state = mstate;
 	else
 	  port->modem_state = (port->modem_state & (~ALLOWED_STATES)) | (mstate & ALLOWED_STATES);
