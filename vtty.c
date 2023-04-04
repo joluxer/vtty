@@ -47,7 +47,7 @@
 
 static struct tty_driver *vtty_driver;
 
-static bool user_break_timing = true;
+static bool timed_break = true;
 static char* tty_name_template = "ttyV";
 static char* mux_name = "vtmx";
 static bool set_termios_full = false;
@@ -921,7 +921,7 @@ static int __init vtty_init(void)
 			TTY_DRIVER_REAL_RAW |
 			TTY_DRIVER_DYNAMIC_DEV;
 
-	if (user_break_timing)
+	if (timed_break)
 		driver_flags |= TTY_DRIVER_HARDWARE_BREAK;
 
 	vtty_driver = tty_alloc_driver(VTTY_MAX, driver_flags);
@@ -971,8 +971,8 @@ static void __exit vtty_exit(void)
 	pr_info("%s removed\n", module_name(THIS_MODULE));
 }
 
-module_param(user_break_timing, bool, 0444);
-MODULE_PARM_DESC(user_break_timing, " set N, if the userspace vtty provider/master cannot do break signal timing, defaults to Y");
+module_param(timed_break, bool, 0444);
+MODULE_PARM_DESC(timed_break, " set N, if the userspace vtty provider/master cannot do break signal timing on its own, defaults to Y");
 module_param(set_termios_full, bool, 0664);
 MODULE_PARM_DESC(set_termios_full, " enable submission of new and old termios value in SET_TERMIOS packet to master");
 module_param(full_state_control, bool, 0664);
