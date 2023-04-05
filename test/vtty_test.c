@@ -129,13 +129,17 @@ void open_pair(int *mx, int *tty)
 	open_vtty(tty);
 }
 
+void drain(int fd);
+
 void t3_mux_write()
 {
 	int mx, tty;
 	char ibuf[16]="0123456789abcdef";
 	char obuf[16];
+
 	t_begin("VTMX write -> VTTY read");
 	open_pair(&mx, &tty);
+	drain(mx);
 
 	t_assert_eq(write(mx, ibuf, 16), 16);
 	t_assert_eq(read(tty, obuf, 16), 16);
@@ -873,6 +877,44 @@ void t21_slave_multiple_open(void)
 	t_ok();
 }
 
+void t22_slave_open_count()
+{
+	int mx, tty1, tty2;
+	char buf[100];
+	int ch;
+	unsigned cnt;
+	t_begin("VTMX receives a TAG_OPEN_COUNT message");
+	open_vtmx(&mx);
+	drain(mx);
+
+	open_vtty(&tty1);
+	t_assert(read(mx, buf, sizeof(buf)) == 9);
+	t_assert_eq(buf[0], TAG_OPEN_COUNT);
+	memcpy(&ch, buf+1, sizeof(ch));
+	memcpy(&cnt, buf+1+sizeof(ch), sizeof(cnt));
+	t_assert(ch == 1);
+	t_assert(cnt == 1);
+
+	open_vtty(&tty2);
+	t_assert(read(mx, buf, sizeof(buf)) == 9);
+	t_assert_eq(buf[0], TAG_OPEN_COUNT);
+	memcpy(&ch, buf+1, sizeof(ch));
+	memcpy(&cnt, buf+1+sizeof(ch), sizeof(cnt));
+	t_assert(ch == 1);
+	t_assert(cnt == 2);
+
+	close(tty2);
+	t_assert(read(mx, buf, sizeof(buf)) == 9);
+	t_assert_eq(buf[0], TAG_OPEN_COUNT);
+	memcpy(&ch, buf+1, sizeof(ch));
+	memcpy(&cnt, buf+1+sizeof(ch), sizeof(cnt));
+	t_assert(ch == -1);
+	t_assert(cnt == 1);
+
+	close(mx);
+	close(tty1);
+	t_ok();
+}
 #endif
 
 int main()
@@ -918,6 +960,7 @@ int main()
 	t19_vtmx_read_wakeup_oob(S_POLLED);
 	t20_vtmx_mset();
 	t21_slave_multiple_open();
+	t22_slave_open_count();
 #endif
 	return 0;
 }
