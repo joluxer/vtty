@@ -847,9 +847,30 @@ void t20_vtmx_mset()
 	ioctl(tty, TIOCMGET, &a);
 
 	t_assert_eq(a, TIOCM_DTR | TIOCM_CTS);
-	t_ok();
-	close(mx);
 	close(tty);
+	close(mx);
+	t_ok();
+}
+
+void t21_slave_multiple_open(void)
+{
+	int mx, tty1, tty2;
+	t_begin("VTTY multiple open");
+	open_vtmx(&mx);
+	drain(mx);
+
+	open_vtty(&tty1);
+	drain(mx);
+
+	open_vtty(&tty2);
+	drain(mx);
+
+	close(tty2);
+	drain(mx);
+
+	close(mx);
+	close(tty1);
+	t_ok();
 }
 
 #endif
@@ -896,6 +917,7 @@ int main()
 	t19_vtmx_read_wakeup_oob(S_BLOCKING);
 	t19_vtmx_read_wakeup_oob(S_POLLED);
 	t20_vtmx_mset();
+	t21_slave_multiple_open();
 #endif
 	return 0;
 }

@@ -88,6 +88,7 @@ struct vtty_port {
 	unsigned int master_is_open;
 	bool set_termios_full;
 	bool full_state_control;
+	int slave_open_count;
 
 	wait_queue_head_t read_wait, write_wait; // read/write from vtmx perspective
 	wait_queue_head_t oob_wait; // vtty-side ioctl => vtmx-side read
@@ -110,6 +111,9 @@ static int vtty_open(struct tty_struct *tty, struct file *filp)
 		// free space is above the watermark
 		set_bit(TTY_THROTTLED, &tty->flags);
 
+		// maintain usage count
+		++vtty->slave_open_count;
+
 		// push buffered data out
 		tty_flip_buffer_push(&vtty->port);
 
@@ -131,7 +135,11 @@ static void vtty_close(struct tty_struct *tty, struct file *filp)
 
 	dev_dbg(tty->dev, "%s enter\n", __func__);
 
-	vtty->tty = NULL;
+	// maintain usage count
+	--vtty->slave_open_count;
+
+	if (0 >= vtty->slave_open_count)
+		vtty->tty = NULL;
 
 	if (! vtty->master_is_open)
 		vtty_destroy_port(tty->index);
@@ -540,11 +548,11 @@ static int vtmx_release (struct inode *nodp, struct file *filp)
 	int idx;
 	struct vtty_port *port = filp->private_data;
 
-	mutex_lock(&portlock);
-
 	idx = port - ports;
 
 	pr_debug("%s %s port[%d] enter\n", module_name(THIS_MODULE), __func__, (int)idx);
+
+	mutex_lock(&portlock);
 
 	// prohibit queueing slave->master data, no-one will consume it
 	port->master_is_open = MASTER_CLOSING;
@@ -565,11 +573,15 @@ static int vtmx_release (struct inode *nodp, struct file *filp)
 		wake_up_all(&port->write_wait);
 	}
 
+	mutex_unlock(&portlock);	// tty_vhangup() will do its own locking, so need to unlock it
+
 	if(port->tty) {
 		tty_vhangup(port->tty);
 //		wake_up_all(&port->read_wait);
 //		wake_up_all(&port->write_wait);
 	}
+
+	mutex_lock(&portlock);
 
 	port->master_is_open = MASTER_CLOSED;
 

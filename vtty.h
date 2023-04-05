@@ -50,9 +50,21 @@
  * TAG_FLUSH_BUFFER marks packets from kernel to master, requesting
  * discard of private output buffers, by call to the tty operation flush_buffer().
  *
+ * Data is a dummy int.
+ *
  * Ref.: https://docs.kernel.org/driver-api/tty/tty_driver.html#tty-operations-reference
  */
 #define TAG_FLUSH_BUFFER (4)
+
+/**
+ * TAG_BREAK_CTL marks packets from kernel to master, containing
+ * the current slave open count, because it changed, and the amount of change.
+ *
+ * Data contains two words of type int:
+ * * first word containing the relative change of the counter: -1 for close, +1 for open
+ * * second word contains the current absolute open count
+ */
+#define TAG_OPEN_COUNT (5)
 
 #include <asm/ioctl.h>
 
