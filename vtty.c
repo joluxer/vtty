@@ -83,6 +83,7 @@ struct vtty_port {
 	int oob_tag;
 	union vtty_oob_data oob_data;
 	size_t oob_size;
+	int oob_slave_count_sent;
 
 	unsigned int modem_state;
 	unsigned int master_is_open;
@@ -113,6 +114,7 @@ static int vtty_open(struct tty_struct *tty, struct file *filp)
 
 		// maintain usage count
 		++vtty->slave_open_count;
+		wake_up_interruptible_sync_poll(&vtty->read_wait, POLLIN | POLLRDNORM);
 
 		// push buffered data out
 		tty_flip_buffer_push(&vtty->port);
@@ -137,6 +139,7 @@ static void vtty_close(struct tty_struct *tty, struct file *filp)
 
 	// maintain usage count
 	--vtty->slave_open_count;
+	wake_up_interruptible_sync_poll(&vtty->read_wait, POLLIN | POLLRDNORM);
 
 	if (0 >= vtty->slave_open_count)
 		vtty->tty = NULL;
@@ -559,6 +562,7 @@ static int vtmx_release (struct inode *nodp, struct file *filp)
 
 	// kill pending OOB data, no-one will consume it
 	port->oob_size = 0;
+	port->oob_slave_count_sent = port->slave_open_count;
 
 	if(port->tty) {
 		set_bit(TTY_IO_ERROR, &port->tty->flags);
@@ -627,6 +631,37 @@ static ssize_t vtmx_read (struct file *filp, char __user *ptr, size_t size, loff
 		pr_debug("%s %s port[%d] (size=%d ret=%d)\n", module_name(THIS_MODULE), __func__, (int)(port - ports), (int)size, (int)ret);
 
 		if(ret == 0) {
+			if (port->oob_slave_count_sent != port->slave_open_count) {
+				// open count was not yet communicated
+				char tag = TAG_OPEN_COUNT;
+				int copystatus;
+				int ch = port->slave_open_count - port->oob_slave_count_sent;
+
+				pr_debug("%s %s port[%d] -> oob %d, slave_open_count: %i (%i)\n", module_name(THIS_MODULE), __func__, (int)(port - ports), tag, port->slave_open_count, ch);
+
+				if(copy_to_user(ptr, &tag, 1)) {
+					ret = -EFAULT;
+					break;
+				}
+
+				ptr++;
+				ret++;
+				size--;
+
+				copystatus = copy_to_user(ptr, &ch, sizeof(ch));
+				ptr += sizeof(ch);
+				ret += sizeof(ch);
+				size -= sizeof(ch);
+
+				copystatus = copy_to_user(ptr, &port->slave_open_count, sizeof(port->slave_open_count));
+				ptr += sizeof(port->slave_open_count);
+				ret += sizeof(port->slave_open_count);
+				size -= sizeof(port->slave_open_count);
+
+				port->oob_slave_count_sent = port->slave_open_count;
+				wake_up_interruptible_sync(&port->oob_wait);
+				break;
+			} else
 			// oob
 			if(port->oob_size > 0) {
 				char tag = (char)port->oob_tag;
@@ -843,7 +878,7 @@ static unsigned int vtmx_poll(struct file *filp, poll_table *wait)
 		mask |= POLLIN | POLLRDNORM;
 
 	// any oob data?
-	if(port->oob_size > 0)
+	if((port->oob_size > 0) || (port->oob_slave_count_sent != port->slave_open_count))
 		mask |= POLLIN | POLLRDNORM | POLLPRI;
 
 	if(tty_buffer_space_avail(&port->port) > 0)
