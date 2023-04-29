@@ -353,7 +353,7 @@ static int vtty_tiocmset(struct tty_struct *tty, unsigned int set, unsigned int 
 
 		dev_dbg(tty->dev, "new modem state %x (%x %x)\n", port->modem_state, set, clear);
 
-		vtty_do_queue_oob(port, TAG_SET_MODEM, &port->modem_state, sizeof(port->modem_state));
+		vtty_do_queue_oob(port, TAG_SET_MODEM, &port->modem_state, sizeof(port->modem_state), NULL, 0); // do not call vtty_queue_oob(), as the lock are already held, would be a deadlock
 	}
 
 	spin_unlock_irqrestore(&port->port.lock, flags);
